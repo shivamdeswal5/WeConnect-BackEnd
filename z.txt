@@ -1,0 +1,739 @@
+lets skip this for a  min first of all we want to see last message in contact we have defined in contant but that is null secondly in we have create chat slice but arnt dipatching anything in chats plus that will contain only one chat third logout functionality online , offline and typing in chat remove what is not necsary and add what is required in below code
+
+current chat 
+'use client';
+
+import {
+  Avatar,
+  Box,
+  IconButton,
+  TextField,
+  Typography,
+  InputAdornment,
+} from '@mui/material';
+import SendIcon from '@mui/icons-material/Send';
+import { useEffect, useRef, useState } from 'react';
+import { useSelector } from 'react-redux';
+import { RootState } from '@/store';
+import { db } from '@/firebase/firebase';
+import { onValue, push, ref } from 'firebase/database';
+import { useDispatch } from "react-redux";
+import { setMessages } from "@/store/chatSlice";
+import { addMessage } from "@/store/chatSlice";
+
+interface IMessage {
+  text: string;
+  senderId: string;
+  timestamp: number;
+}
+
+const Chat = () => {
+  const [message, setMessage] = useState('');
+  const [status, setStatus] = useState('Offline');
+  const [messages, setMessages] = useState<IMessage[]>([]);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const dispatch = useDispatch();
+
+  const currentChatId = useSelector(
+    (state: RootState) => state.chat.currentChatId
+  );
+
+  const currentUser =
+    typeof window !== 'undefined'
+      ? JSON.parse(localStorage.getItem('user') || '{}')
+      : {};
+  const selectedUser =
+    typeof window !== 'undefined'
+      ? JSON.parse(localStorage.getItem('selectedUser') || '{}')
+      : {};
+
+  useEffect(() => {
+    if (!currentChatId) return;
+
+    const chatRef = ref(db, `messages/${currentChatId}`);
+    const unsubscribe = onValue(chatRef, (snapshot) => {
+      const msgs: IMessage[] = [];
+      snapshot.forEach((childSnapshot) => {
+        const data = childSnapshot.val();
+        msgs.push(data);
+        dispatch(addMessage(data));
+      });
+      setMessages(msgs);
+      setTimeout(() => {
+        scrollRef.current?.scrollIntoView({ behavior: 'smooth' });
+      }, 100);
+
+    });
+
+
+    return () => unsubscribe();
+  }, [currentChatId]);
+
+
+  const handleSend = () => {
+    if (!message.trim() || !currentChatId || !currentUser?.uid) return;
+
+    const newMsg: IMessage = {
+      text: message,
+      senderId: currentUser.uid,
+      timestamp: Date.now(),
+    };
+
+    const chatRef = ref(db, `messages/${currentChatId}`);
+    push(chatRef, newMsg);
+
+    setMessage('');
+  };
+
+  const handleClick = () => {
+    setStatus('typing...');    
+  };
+
+  const handleHover = () => {
+    setStatus('offline');    
+  };
+
+  return (
+    <Box
+      flex={3}
+      display="flex"
+      flexDirection="column"
+      height="100vh"
+      width="100%"
+      onMouseOver = {handleHover}
+    >
+      {currentChatId ? (
+        <>
+          {/* Header */}
+          <Box
+            display="flex"
+            alignItems="center"
+            px={2}
+            py={1}
+            borderBottom="1px solid #ccc"
+            bgcolor="#f5f5f5"
+          >
+            <Avatar src={selectedUser.photoURL || ''} />
+            <Box ml={2}>
+              <Typography variant="subtitle1">
+                {selectedUser.displayName || selectedUser.email}
+              </Typography>
+              <Typography variant="caption" color="green">
+                {/* {currentUser.isOnline ? 'Online' : 'Offline'} */}
+                {status}
+              </Typography>
+            </Box>
+          </Box>
+
+          {/* Messages */}
+          <Box
+            flex={1}
+            p={2}
+            overflow="auto"
+            sx={{
+              backgroundColor: '#fafafa',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '8px',
+            }}
+          >
+            {messages.map((msg, index) => (
+              <Box
+                key={index}
+                alignSelf={
+                  msg.senderId === currentUser.uid
+                    ? 'flex-end'
+                    : 'flex-start'
+                }
+                bgcolor={
+                  msg.senderId === currentUser.uid ? '#DCF8C6' : '#fff'
+                }
+                p={1.2}
+                borderRadius={2}
+                maxWidth="70%"
+              >
+                <Typography variant="body2">{msg.text}</Typography>
+              </Box>
+            ))}
+            <div ref={scrollRef} />
+          </Box>
+
+          {/* Input */}
+          <Box px={2} py={1} borderTop="1px solid #ccc" bgcolor="#f5f5f5">
+            <TextField
+              fullWidth
+              placeholder="Type a message"
+              value={message}
+              onChange={(e) => setMessage(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleSend()}
+              onInput={handleClick}
+              InputProps={{
+                endAdornment: (
+                  <InputAdornment position="end">
+                    <IconButton onClick={handleSend}>
+                      <SendIcon />
+                    </IconButton>
+                  </InputAdornment>
+                ),
+              }}
+            />
+          </Box>
+        </>
+      ) : (
+        <Box
+          flex={1}
+          display="flex"
+          alignItems="center"
+          justifyContent="center"
+        >
+          <Typography variant="h6" color="textSecondary">
+            Select a contact to start chatting
+          </Typography>
+        </Box>
+      )}
+    </Box>
+  );
+};
+
+export default Chat;
+
+contacts
+"use client";
+
+import {
+  Avatar,
+  Box,
+  Typography,
+  TextField,
+  InputAdornment,
+} from "@mui/material";
+import SearchIcon from "@mui/icons-material/Search";
+import { useEffect, useState } from "react";
+import { fetchAllUsers } from "@/firebase/user-service";
+import { useDispatch, useSelector } from "react-redux";
+import { setCurrentChatId } from "@/store/chatSlice";
+import { RootState } from "@/store";
+type SomeFunction = (...args: any[]) => void;
+
+interface IUser {
+  uid?: string;
+  email?: string;
+  photoURL?: string;
+  displayName?: string;
+  lastMessage?: string;
+}
+
+const Contacts = () => {
+  const [users, setUsers] = useState<IUser[]>([]);
+  const [filteredUsers, setFilteredUsers] = useState<IUser[]>([]);
+  const [search, setSearch] = useState("");
+  const dispatch = useDispatch();
+   const messages = useSelector(
+      (state: RootState) => state.chat.messages
+    );
+
+    console.log("Messages are: ",messages);
+
+  const currentUser =
+    typeof window !== "undefined"
+      ? JSON.parse(localStorage.getItem("user") || "{}")
+      : {};
+
+  useEffect(() => {
+    if (!currentUser.uid) return;
+    fetchAllUsers(currentUser.uid, (allUsers) => {
+      setUsers(allUsers);
+    });
+  }, [currentUser.uid]);
+
+  useEffect(() => {
+    const filtered = users.filter((u) =>
+      (u.displayName || u.email || "")
+        .toLowerCase()
+        .includes(search.toLowerCase())
+    );
+    setFilteredUsers(filtered);
+  }, [search, users]);
+
+  const handleContactClick = (contact: IUser) => {
+    if (!currentUser.uid || !contact.uid) return;
+    const chatId = [currentUser.uid, contact.uid].sort().join("_");
+    dispatch(setCurrentChatId(chatId));
+    localStorage.setItem("selectedUser", JSON.stringify(contact));
+  };
+
+  const handleSearch = (e: React.ChangeEvent<HTMLInputElement>) => {
+   setSearch(e.target.value);
+   console.log("search",search);
+  };
+
+      const debounce = (func:SomeFunction,wait:number) =>{
+        let timerId: ReturnType<typeof setTimeout>;
+        return (...args:unknown[]) =>{
+          clearTimeout(timerId);
+          timerId = setTimeout(()=> func(...args),wait)
+        }
+      }
+  const debounceCall = debounce(handleSearch, 600);
+
+  return (
+    <Box
+      display="flex"
+      flexDirection="column"
+      height="100vh"
+      sx={{
+        width: "300px",
+        borderRight: "1px solid #ccc",
+        boxSizing: "border-box",
+        px: 2,
+        pt: 2,
+      }}
+    >
+      <Typography variant="h4">Messages</Typography>
+
+      <TextField
+        fullWidth
+        placeholder="Search users..."
+        variant="outlined"
+       
+        onChange={debounceCall}
+        sx={{ my: 2 }}
+        InputProps={{
+          startAdornment: (
+            <InputAdornment position="start">
+              <SearchIcon />
+            </InputAdornment>
+          ),
+        }}
+      />
+
+      <Box flex={1} overflow="auto" pr={1}>
+        {filteredUsers.map((item, index) => (
+          <Box
+            key={index}
+            display="flex"
+            alignItems="center"
+            padding="10px"
+            borderBottom="1px solid #ccc"
+            sx={{ cursor: "pointer" }}
+            onClick={() => handleContactClick(item)}
+          >
+            <Avatar src={item.photoURL || ""} sx={{ mr: 1.5 }} />
+            <Box>
+              <Typography variant="body1">
+                {item.displayName || item.email?.split("@")[0]}
+              </Typography>
+              <Typography variant="caption">
+                {item?.lastMessage || ""}
+              </Typography>
+            </Box>
+          </Box>
+        ))}
+      </Box>
+    </Box>
+  );
+};
+
+export default Contacts;
+
+loginform
+"use client";
+
+import React from "react";
+import { TextField, Button, Box, Typography } from "@mui/material";
+import GoogleIcon from "@mui/icons-material/Google";
+import { useForm } from "react-hook-form";
+import { useRouter } from "next/navigation";
+import { toast } from "react-toastify";
+import {
+  signInWithEmailAndPassword,
+  signInWithPopup,
+  GoogleAuthProvider,
+} from "firebase/auth";
+import { auth } from "@/firebase/firebase";
+import { ref, set } from "firebase/database";
+import { db } from "@/firebase/firebase";
+
+interface LoginFormInputs {
+  email: string;
+  password: string;
+}
+
+const LoginForm = () => {
+  const {
+    register,
+    handleSubmit,
+    formState: { errors },
+  } = useForm<LoginFormInputs>();
+  const router = useRouter();
+
+  const syncUserToBackend = async (user: any, token: string) => {
+    const userData = {
+      uid: user.uid,
+      name: user.displayName || "",
+      email: user.email || "",
+      photoURL: user.photoURL || "",
+    };
+
+    try {
+      await set(ref(db, `users/${user.uid}`), userData);
+    } catch (err) {
+      console.warn("Firebase DB save failed:", err);
+    }
+
+    await fetch("http://localhost:4000/users", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(userData),
+    });
+
+    const newUserData = {
+      ...userData
+    }
+
+    localStorage.setItem("user", JSON.stringify(newUserData));
+    localStorage.setItem("token", token);
+  };
+
+  const onSubmit = async (data: LoginFormInputs) => {
+    try {
+      const userCredential = await signInWithEmailAndPassword(
+        auth,
+        data.email,
+        data.password
+      );
+      const user = userCredential.user;
+      const token = await user.getIdToken();
+
+      await syncUserToBackend(user, token);
+
+      toast.success(`Welcome, ${user.displayName || "user"}`);
+      router.push("/dashboard");
+    } catch (err) {
+      toast.error("Login failed");
+      console.error(err);
+    }
+  };
+
+  const handleGoogleLogin = async () => {
+    try {
+      const provider = new GoogleAuthProvider();
+      const userCredential = await signInWithPopup(auth, provider);
+      const user = userCredential.user;
+      const token = await user.getIdToken();
+
+      await syncUserToBackend(user, token);
+
+      toast.success(`Welcome, ${user.displayName}`);
+      router.push("/dashboard");
+    } catch (err) {
+      toast.error("Google Sign-In failed");
+      console.error(err);
+    }
+  };
+
+  return (
+    <Box sx={{ maxWidth: 400, mx: "auto", mt: 8 }}>
+      <Typography variant="h5" mb={3}>
+        Login
+      </Typography>
+      <form onSubmit={handleSubmit(onSubmit)}>
+        <TextField
+          fullWidth
+          label="Email"
+          margin="normal"
+          {...register("email", { required: "Email is required" })}
+          error={!!errors.email}
+          helperText={errors.email?.message}
+        />
+        <TextField
+          fullWidth
+          label="Password"
+          type="password"
+          margin="normal"
+          {...register("password", { required: "Password is required" })}
+          error={!!errors.password}
+          helperText={errors.password?.message}
+        />
+        <Button type="submit" variant="contained" fullWidth sx={{ mt: 2 }}>
+          Login
+        </Button>
+      </form>
+      <Typography textAlign="center" mt={2} mb={1}>
+        or
+      </Typography>
+      <Button
+        variant="contained"
+        startIcon={<GoogleIcon />}
+        fullWidth
+        onClick={handleGoogleLogin}
+      >
+        Sign in with Google
+      </Button>
+    </Box>
+  );
+};
+
+export default LoginForm;
+
+signupform
+"use client";
+
+import React from "react";
+import { Box, Button, TextField, Typography } from "@mui/material";
+import { useForm } from "react-hook-form";
+import { useRouter } from "next/navigation";
+import { toast } from "react-toastify";
+import { createUserWithEmailAndPassword, updateProfile } from "firebase/auth";
+import { ref, set } from "firebase/database";
+import { auth, db } from "@/firebase/firebase";
+
+interface SignUpFormInputs {
+  name: string;
+  email: string;
+  password: string;
+}
+
+const SignUpForm = () => {
+  const {
+    register,
+    handleSubmit,
+    formState: { errors },
+  } = useForm<SignUpFormInputs>();
+  const router = useRouter();
+
+  const onSubmit = async (data: SignUpFormInputs) => {
+    try {
+      const userCredential = await createUserWithEmailAndPassword(
+        auth,
+        data.email,
+        data.password
+      );
+      const user = userCredential.user;
+
+      await updateProfile(user, {
+        displayName: data.name,
+      });
+
+      try {
+        await set(ref(db, `users/${user.uid}`), {
+          uid: user.uid,
+          email: user.email,
+          displayName: data.name,
+          photoURL: user.photoURL || "",
+        });
+      } catch (err) {
+        console.warn("Firebase DB save failed:", err);
+      }
+
+      const token = await user.getIdToken();
+
+      const userData = {
+        uid: user.uid,
+        name: data.name,
+        email: user.email || "",
+        photoURL: user.photoURL || "",
+      };
+
+      await fetch("http://localhost:4000/users", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(userData),
+      });
+
+      localStorage.setItem("user", JSON.stringify(userData));
+      localStorage.setItem("token", token);
+
+      toast.success(`Welcome, ${data.name}`);
+      router.push("/dashboard");
+    } catch (err) {
+      toast.error("Signup failed");
+      console.error(err);
+    }
+  };
+
+  return (
+    <Box sx={{ maxWidth: 400, mx: "auto", mt: 8 }}>
+      <Typography variant="h5" mb={3}>
+        Sign Up
+      </Typography>
+      <form onSubmit={handleSubmit(onSubmit)}>
+        <TextField
+          fullWidth
+          label="Name"
+          margin="normal"
+          {...register("name", { required: "Name is required" })}
+          error={!!errors.name}
+          helperText={errors.name?.message}
+        />
+        <TextField
+          fullWidth
+          label="Email"
+          margin="normal"
+          {...register("email", { required: "Email is required" })}
+          error={!!errors.email}
+          helperText={errors.email?.message}
+        />
+        <TextField
+          fullWidth
+          label="Password"
+          type="password"
+          margin="normal"
+          {...register("password", { required: "Password is required" })}
+          error={!!errors.password}
+          helperText={errors.password?.message}
+        />
+        <Button type="submit" variant="contained" fullWidth sx={{ mt: 2 }}>
+          Create Account
+        </Button>
+      </form>
+    </Box>
+  );
+};
+
+export default SignUpForm;
+
+chatslice
+
+import { createSlice, PayloadAction } from '@reduxjs/toolkit';
+
+interface User {
+  uid: string;
+  displayName: string;
+  photoURL: string;
+  email?: string;
+  isOnline?: boolean;
+}
+
+interface ChatState {
+  currentChatId: string | null;
+  selectedUser: User | null;
+  messages: any[];
+}
+
+const initialState: ChatState = {
+  currentChatId: null,
+  selectedUser: null,
+  messages: [],
+};
+
+const chatSlice = createSlice({
+  name: 'chat',
+  initialState,
+  reducers: {
+    setCurrentChatId(state, action: PayloadAction<string>) {
+      state.currentChatId = action.payload;
+    },
+    setSelectedUser(state, action: PayloadAction<User>) {
+      state.selectedUser = action.payload;
+    },
+    setMessages(state, action: PayloadAction<any[]>) {
+      state.messages = action.payload;
+    },
+    addMessage(state, action: PayloadAction<any>) {
+      state.messages.push(action.payload);
+    },
+  },
+});
+
+export const {
+  setCurrentChatId,
+  setSelectedUser,
+  setMessages,
+  addMessage,
+} = chatSlice.actions;
+
+export default chatSlice.reducer;
+
+fetuser inside firebase user-service.ts
+import { db } from "./firebase";
+import { onValue, ref } from "firebase/database";
+
+export function fetchAllUsers(currentUid: string, callback: (users: any[]) => void) {
+  const usersRef = ref(db, "users");
+
+  onValue(usersRef, (snapshot) => {
+    const data = snapshot.val();
+    const users = data
+      ? Object.values(data).filter((user: any) => user.uid !== currentUid)
+      : [];
+    callback(users);
+  });
+}
+
+chat slice
+
+
+import { createSlice, PayloadAction } from '@reduxjs/toolkit';
+
+interface User {
+  uid: string;
+  displayName: string;
+  photoURL: string;
+  email?: string;
+  isOnline?: boolean;
+}
+
+interface ChatState {
+  currentChatId: string | null;
+  selectedUser: User | null;
+  messages: any[];
+}
+
+const initialState: ChatState = {
+  currentChatId: null,
+  selectedUser: null,
+  messages: [],
+};
+
+const chatSlice = createSlice({
+  name: 'chat',
+  initialState,
+  reducers: {
+    setCurrentChatId(state, action: PayloadAction<string>) {
+      state.currentChatId = action.payload;
+    },
+    setSelectedUser(state, action: PayloadAction<User>) {
+      state.selectedUser = action.payload;
+    },
+    setMessages(state, action: PayloadAction<any[]>) {
+      state.messages = action.payload;
+    },
+    addMessage(state, action: PayloadAction<any>) {
+      state.messages.push(action.payload);
+    },
+  },
+});
+
+export const {
+  setCurrentChatId,
+  setSelectedUser,
+  setMessages,
+  addMessage,
+} = chatSlice.actions;
+
+export default chatSlice.reducer;
+
+
+dashboard
+import { Stack } from '@mui/material'
+import React from 'react'
+import SideBar from '@/components/sidebar/sidebar'
+import Contacts from '../../components/contacts/contacts';
+import Chat from '@/components/chat/chat';
+
+export default function page() {
+  return (
+    <Stack direction={"row"} height={"100vh"}  overflow="hidden" >
+      <SideBar/>  
+      <Contacts/> 
+      <Chat/>
+    </Stack>
+  )
+}
